@@ -149,8 +149,7 @@ function save(root) {
                     alert("Invalid size: " + size);
                     return;
                 } 
-                DOC.resizeImage(UnitValue(size, "px"), 
-                    UnitValue(etSizes[i].text,"px"), null, ResampleMethod.BICUBIC);
+                DOC.resizeImage(UnitValue(size, "px"), UnitValue(size,"px"), null, ResampleMethod.BICUBIC);
 
                 file = new File(path + "/" + name);
                 // check destination file
