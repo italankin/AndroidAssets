@@ -1,16 +1,31 @@
 ﻿#target photoshop
 
-var SIZE_VALUES = [48, 24, 24, 16];
-var SIZE_FACTORS = [1, 1.5, 2, 3, 4];
-var DEFAULT_KEYS = ["mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"];
-var PRESETS = ["Launcher","Action Bar", "Notification", "Small"];
-var EXTENSION = ".png";
-var DOC = app.activeDocument;
-var PATH = app.activeDocument.path;
-var FOLDER_NAMES = ["mipmap-", "drawable-"];
-var NAMES = ["ic_launcher.png", DOC.name.substring(0, DOC.name.length - 4) + EXTENSION];
+const SIZE_VALUES = [48, 24, 24, 16];
+const SIZE_FACTORS = [1, 1.5, 2, 3, 4];
+const DEFAULT_KEYS = ["mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"];
+const PRESETS = ["Launcher","Action Bar", "Notification", "Small"];
+const EXTENSION = ".png";
+const DOC = app.activeDocument;
+const FOLDER_NAMES = ["mipmap-", "drawable-"];
 
-var w = new Window("dialog { preferredSize: [350, -1], alignChildren: 'center' }", "Extract assets");
+var docname = DOC.name;
+var index;
+if (docname == null || (index = docname.lastIndexOf(".")) <= 0) {
+    if (docname.length == 0) {
+        docname = "my_icon";
+    }
+} else {
+    docname = docname.substring(0, index);
+}
+const NAMES = ["ic_launcher.png", getNiceName(docname)];
+
+const PREF_NAME = stringIDToTypeID("AndroidAssetsPreferences");
+const PREF_LAST_USED_PRESET = stringIDToTypeID("last_used_preset");
+const PREF_LAST_OUTPUT_DIR = stringIDToTypeID("last_output_dir");
+
+var prefs = readPrefs();
+
+var w = new Window("dialog { preferredSize: [350, -1], alignChildren: 'center' }", "Android Assets");
 w.orientation = "column";
 
 // - PANEL PRESETS -
@@ -19,7 +34,7 @@ var tSet = g1_3.add("statictext", undefined, "Preset:"); tSet.preferredSize = [6
 // edit text for name
 var etSet = g1_3.add("dropdownlist", undefined, PRESETS);
 etSet.preferredSize = [200, -1];
-etSet.selection = 0;
+etSet.selection = prefs == null ? 1 : prefs[1];
 etSet.onChange = selectPreset;
 
 // - PANEL NAMES -
@@ -27,9 +42,9 @@ var g1 = w.add("panel { orientation: 'column', alignChildren: 'left', preferredS
 
 // - GROUP NAMES -
 var g1_1 = g1.add("group {orientation : 'row' }");
-var tName = g1_1.add("statictext", undefined, "File name:"); tName.preferredSize = [60,-1];
+var tName = g1_1.add("statictext", undefined, "File name:"); tName.preferredSize = [-1,-1];
 // edit text for name
-var etName = g1_1.add("edittext { preferredSize: [200, -1] }"); 
+var etName = g1_1.add("edittext { preferredSize: [200, -1] }");
 
 // - PANEL SIZES -
 var g2 = w.add("panel { orientation: 'column', preferredSize: [350, -1], alignChildren: 'left' }");
@@ -38,7 +53,7 @@ var g2_0 = g2.add("group { orientation: 'row', alignChildren: 'left' }");
 g2_0.add("statictext { preferredSize: [20, -1] }");
 g2_0.add("statictext { preferredSize: [80, -1] }").text = "Folder name";
 g2_0.add("statictext { preferredSize: [80, -1] }").text = "Postfix";
-g2_0.add("statictext { preferredSize: [80, -1] }").text = "Size";
+g2_0.add("statictext { preferredSize: [80, -1] }").text = "Width*";
 var cbSizes = [];
 var etPostfixes = [];
 var etPrefixes = [];
@@ -59,9 +74,14 @@ for(var i = 0; i < 5; i++) {
 }
 
 // - GROUP 5 -
-var g5 = w.add("group { orientation: 'row' }");
-var bSave = g5.add("button",undefined,"Save");
-var cancel = g5.add("button",undefined,"Cancel");
+var g5 = w.add("group { orientation: 'column' }");
+g5.add("statictext { preferredSize: [-1, -1] }").text = 
+        "* Height will be calculated automatically, saving the aspect ratio.";
+
+// - GROUP 6 -
+var g6 = w.add("group { orientation: 'row' }");
+var bSave = g6.add("button",undefined,"Save");
+var cancel = g6.add("button",undefined,"Cancel");
 
 selectPreset();
 bSave.onClick = onSave;
@@ -102,23 +122,33 @@ function selectPreset() {
 }
 
 function onSave() {
-    var folder = Folder.selectDialog("Select a folder");
+    var folder;
+    var title = "Select a folder";
+    if (prefs != null) {
+        try {
+            folder = Folder(prefs[0]).selectDlg(title);
+        } catch(err) {
+            folder = Folder.selectDialog(title);
+        }
+    } else {
+        folder = Folder.selectDialog(title);
+    }
     var history = DOC.activeHistoryState;
-    if(folder != null) {
+    if (folder != null) {
         save(folder);
     }
     try {
         DOC.activeHistoryState = history;
     } catch(err) {
-        alert("Failed to restore document state");
+        showMessage("Error", "Failed to restore document state");
     }
 }
 
 function save(root) {
-    var name = etName.text;
+    var fname = getNiceName(etName.text);
     
     try {
-        activeDocument.mergeVisibleLayers();
+        DOC.mergeVisibleLayers();
     } catch(err) {
         // its ok
     }
@@ -144,14 +174,15 @@ function save(root) {
                 }
 
                 // resize images
-                var size = etSizes[i].text.replace(/\D/, "");
-                if (size == "" || size <= 0) {
-                    alert("Invalid size: " + size);
+                var width = etSizes[i].text.replace(/\D/, "");
+                if (width == "" || width <= 0) {
+                    showMessage("Error", "Invalid size: " + width);
                     return;
-                } 
-                DOC.resizeImage(UnitValue(size, "px"), UnitValue(size,"px"), null, ResampleMethod.BICUBIC);
+                }
+                var ratio = DOC.height / DOC.width;
+                DOC.resizeImage(UnitValue(width, "px"), UnitValue(width * ratio,"px"), null, ResampleMethod.BICUBIC);
 
-                file = new File(path + "/" + name);
+                file = new File(path + "/" + fname);
                 // check destination file
                 if(file.exists) {
                     // remove it as well
@@ -165,7 +196,10 @@ function save(root) {
         return;
     }
 
-    showMessage ("Done", "Assets saved to \""+ root + "\"");
+    savePrefs(etSet.selection.index, folder.path);
+    var prefs = readPrefs();
+
+    showMessage("Done", "Assets saved to \""+ root + "\"");
     w.hide();
 }
 
@@ -174,4 +208,31 @@ function showMessage(title, text) {
     v.add("statictext",undefined,text);
     v.add("button",undefined,"OK");
     v.show();
+}
+
+function savePrefs(preset, dir) {
+    var desc = new ActionDescriptor();
+    desc.putString(PREF_LAST_OUTPUT_DIR, dir);
+    desc.putInteger(PREF_LAST_USED_PRESET, preset);
+    app.putCustomOptions(PREF_NAME, desc, true);
+}
+
+function readPrefs() {
+    try {
+        var desc = app.getCustomOptions(PREF_NAME);
+        return [desc.getString(PREF_LAST_OUTPUT_DIR), desc.getInteger(PREF_LAST_USED_PRESET)];
+    } catch(err) {
+        return null;
+    }
+}
+
+function getNiceName(s) {
+    s = s.replace(/^\d/, "ic_"); // replace first char if it is digit
+    s = s.replace(/[ \\\/\-=*:]/g, "_"); // replace 'bad' chars
+    var sl = s.toLocaleLowerCase();
+    // append extension
+    if (sl.length < 4 || sl.lastIndexOf(EXTENSION) != s.length - 4) {
+        s = s + EXTENSION;
+    }
+    return s;
 }
